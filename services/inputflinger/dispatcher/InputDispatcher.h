@@ -246,6 +246,8 @@ private:
     // Adds an event to a queue of recent events for debugging purposes.
     void addRecentEventLocked(std::shared_ptr<const EventEntry> entry) REQUIRES(mLock);
 
+    nsecs_t mSystemGestureDownTime GUARDED_BY(mLock);
+
     // Blocked event latency optimization.  Drops old events when the user intends
     // to transfer focus to a new application.
     std::shared_ptr<const EventEntry> mNextUnblockedEvent GUARDED_BY(mLock);
@@ -341,6 +343,8 @@ private:
     // Dispatch state.
     bool mDispatchEnabled GUARDED_BY(mLock);
     bool mDispatchFrozen GUARDED_BY(mLock);
+    bool mDispatchFrozenExt GUARDED_BY(mLock);
+    bool mBlockNextSystemGesture GUARDED_BY(mLock);
     bool mInputFilterEnabled GUARDED_BY(mLock);
     float mMaximumObscuringOpacityForTouch GUARDED_BY(mLock);
 
