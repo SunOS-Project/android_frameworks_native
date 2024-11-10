@@ -915,14 +915,14 @@ InputDispatcher::InputDispatcher(InputDispatcherPolicyInterface& policy,
         mLastDropReason(DropReason::NOT_DROPPED),
         mIdGenerator(IdGenerator::Source::INPUT_DISPATCHER),
         mMinTimeBetweenUserActivityPokes(DEFAULT_USER_ACTIVITY_POKE_INTERVAL),
-        mSystemGestureDownTime(LLONG_MIN),
         mNextUnblockedEvent(nullptr),
         mMonitorDispatchingTimeout(DEFAULT_INPUT_DISPATCHING_TIMEOUT),
         mDispatchEnabled(false),
         mDispatchFrozen(false),
         mDispatchFrozenExt(false),
-        mBlockNextSystemGesture(false),
         mInputFilterEnabled(false),
+        mBlockSystemGesture(false),
+        mSystemGestureSize(0),
         mMaximumObscuringOpacityForTouch(1.0f),
         mFocusedDisplayId(ui::LogicalDisplayId::DEFAULT),
         mWindowTokenWithPointerCapture(nullptr),
@@ -1158,14 +1158,15 @@ void InputDispatcher::dispatchOnceInnerLocked(nsecs_t& nextWakeupTime) {
         dropReason = DropReason::DISABLED;
     }
 
-    bool isSystemGesture = mPendingEvent->policyFlags &
-            (POLICY_FLAG_SYSTEM_GESTURE_DOWN |
-            POLICY_FLAG_SYSTEM_GESTURE_MOVE |
-            POLICY_FLAG_SYSTEM_GESTURE_MOVE_TRIGGERED |
-            POLICY_FLAG_SYSTEM_GESTURE_RESET);
-    if (isSystemGesture && mBlockNextSystemGesture) {
-        dropReason = DropReason::POLICY;
-        mBlockNextSystemGesture = false;
+    bool isSystemGesture = mPendingEvent->policyFlags & POLICY_FLAG_SYSTEM_GESTURE;
+    if (isSystemGesture) {
+        --mSystemGestureSize;
+        if (mBlockSystemGesture) {
+            dropReason = DropReason::POLICY;
+            if (mSystemGestureSize == 0) {
+                mBlockSystemGesture = false;
+            }
+        }
     }
 
     if (mNextUnblockedEvent == mPendingEvent) {
@@ -4641,7 +4642,6 @@ void InputDispatcher::notifyMotion(const NotifyMotionArgs& args) {
     }
 
     bool needWake = false;
-    bool needWakeFromSystemGesture = false;
     { // acquire lock
         mLock.lock();
         if (!(policyFlags & POLICY_FLAG_PASS_TO_USER)) {
@@ -4657,31 +4657,8 @@ void InputDispatcher::notifyMotion(const NotifyMotionArgs& args) {
             }
         }
 
-        if (policyFlags & POLICY_FLAG_SYSTEM_GESTURE_DOWN) {
-            mBlockNextSystemGesture = true;
-            mDispatchFrozenExt = true;
-            mSystemGestureDownTime = args.eventTime;
-        } else if (policyFlags & POLICY_FLAG_SYSTEM_GESTURE_MOVE) {
-            if (args.eventTime - mSystemGestureDownTime < 300 * 1000000LL) {
-                mLock.unlock();
-                return;
-            }
-            if (mBlockNextSystemGesture || mDispatchFrozenExt) {
-                mBlockNextSystemGesture = false;
-                mDispatchFrozenExt = false;
-                needWakeFromSystemGesture = true;
-            }
-        } else if (policyFlags & POLICY_FLAG_SYSTEM_GESTURE_MOVE_TRIGGERED) {
-            mLock.unlock();
-            return;
-        } else if (policyFlags & POLICY_FLAG_SYSTEM_GESTURE_RESET) {
-            mBlockNextSystemGesture = true;
-            mDispatchFrozenExt = false;
-            needWakeFromSystemGesture = true;
-        } else if (policyFlags & POLICY_FLAG_SYSTEM_GESTURE_CANCELED) {
-            mBlockNextSystemGesture = false;
-            mDispatchFrozenExt = false;
-            needWakeFromSystemGesture = true;
+        if (policyFlags & POLICY_FLAG_SYSTEM_GESTURE) {
+            ++mSystemGestureSize;
         }
 
         if (shouldSendMotionToInputFilterLocked(args)) {
@@ -4731,7 +4708,7 @@ void InputDispatcher::notifyMotion(const NotifyMotionArgs& args) {
         mLock.unlock();
     } // release lock
 
-    if (needWake || needWakeFromSystemGesture) {
+    if (needWake) {
         mLooper->wake();
     }
 }
@@ -4866,7 +4843,6 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
     const bool isAsync = syncMode == InputEventInjectionSync::NONE;
     auto injectionState = std::make_shared<InjectionState>(targetUid, isAsync);
 
-    bool needWakeFromSystemGesture = false;
     std::queue<std::unique_ptr<EventEntry>> injectedEntries;
     switch (event->getType()) {
         case InputEventType::KEY: {
@@ -4970,31 +4946,8 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
                 }
             }
 
-            if (policyFlags & POLICY_FLAG_SYSTEM_GESTURE_DOWN) {
-                mBlockNextSystemGesture = true;
-                mDispatchFrozenExt = true;
-                mSystemGestureDownTime = motionEvent.getEventTime();
-            } else if (policyFlags & POLICY_FLAG_SYSTEM_GESTURE_MOVE) {
-                if (motionEvent.getEventTime() - mSystemGestureDownTime < 300 * 1000000LL) {
-                    mLock.unlock();
-                    return InputEventInjectionResult::SUCCEEDED;
-                }
-                if (mBlockNextSystemGesture || mDispatchFrozenExt) {
-                    mBlockNextSystemGesture = false;
-                    mDispatchFrozenExt = false;
-                    needWakeFromSystemGesture = true;
-                }
-            } else if (policyFlags & POLICY_FLAG_SYSTEM_GESTURE_MOVE_TRIGGERED) {
-                mLock.unlock();
-                return InputEventInjectionResult::SUCCEEDED;
-            } else if (policyFlags & POLICY_FLAG_SYSTEM_GESTURE_RESET) {
-                mBlockNextSystemGesture = true;
-                mDispatchFrozenExt = false;
-                needWakeFromSystemGesture = true;
-            } else if (policyFlags & POLICY_FLAG_SYSTEM_GESTURE_CANCELED) {
-                mBlockNextSystemGesture = false;
-                mDispatchFrozenExt = false;
-                needWakeFromSystemGesture = true;
+            if (policyFlags & POLICY_FLAG_SYSTEM_GESTURE) {
+                ++mSystemGestureSize;
             }
 
             const nsecs_t* sampleEventTimes = motionEvent.getSampleEventTimes();
@@ -5071,7 +5024,7 @@ InputEventInjectionResult InputDispatcher::injectInputEvent(const InputEvent* ev
 
     mLock.unlock();
 
-    if (needWake || needWakeFromSystemGesture) {
+    if (needWake) {
         mLooper->wake();
     }
 
@@ -5986,6 +5939,8 @@ void InputDispatcher::dumpDispatchStateLocked(std::string& dump) const {
     dump += StringPrintf(INDENT "DispatchFrozen: %s\n", toString(mDispatchFrozen));
     dump += StringPrintf(INDENT "DispatchFrozenExt: %s\n", toString(mDispatchFrozenExt));
     dump += StringPrintf(INDENT "InputFilterEnabled: %s\n", toString(mInputFilterEnabled));
+    dump += StringPrintf(INDENT "BlockSystemGesture: %s\n", toString(mBlockSystemGesture));
+    dump += StringPrintf(INDENT "SystemGestureSize: %d\n", mSystemGestureSize);
     dump += StringPrintf(INDENT "FocusedDisplayId: %s\n", mFocusedDisplayId.toString().c_str());
 
     if (!mFocusedApplicationHandlesByDisplay.empty()) {
@@ -6420,6 +6375,39 @@ void InputDispatcher::setDisplayEligibilityForPointerCapture(ui::LogicalDisplayI
             mIneligibleDisplaysForPointerCapture.push_back(displayId);
         }
     } // release lock
+}
+
+void InputDispatcher::notifySystemGestureDown() {
+    { // acquire lock
+        std::scoped_lock _l(mLock);
+        mDispatchFrozenExt = true;
+        mBlockSystemGesture = true;
+    } // release lock
+}
+
+void InputDispatcher::dispatchPendingSystemGesture() {
+    { // acquire lock
+        std::scoped_lock _l(mLock);
+        mDispatchFrozenExt = false;
+        mBlockSystemGesture = false;
+        if (mSystemGestureSize <= 0) {
+            return;
+        }
+    } // release lock
+    mLooper->wake();
+}
+
+void InputDispatcher::dropPendingSystemGesture() {
+    { // acquire lock
+        std::scoped_lock _l(mLock);
+        mDispatchFrozenExt = false;
+        if (mSystemGestureSize <= 0) {
+            mBlockSystemGesture = false;
+            return;
+        }
+        mBlockSystemGesture = true;
+    } // release lock
+    mLooper->wake();
 }
 
 std::optional<gui::Pid> InputDispatcher::findMonitorPidByTokenLocked(const sp<IBinder>& token) {

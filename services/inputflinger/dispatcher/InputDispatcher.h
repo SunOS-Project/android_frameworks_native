@@ -142,6 +142,10 @@ public:
     void setDisplayEligibilityForPointerCapture(ui::LogicalDisplayId displayId,
                                                 bool isEligible) override;
 
+    void notifySystemGestureDown() override;
+    void dispatchPendingSystemGesture() override;
+    void dropPendingSystemGesture() override;
+
     std::array<uint8_t, 32> sign(const VerifiedInputEvent& event) const;
 
     void displayRemoved(ui::LogicalDisplayId displayId) override;
@@ -246,8 +250,6 @@ private:
     // Adds an event to a queue of recent events for debugging purposes.
     void addRecentEventLocked(std::shared_ptr<const EventEntry> entry) REQUIRES(mLock);
 
-    nsecs_t mSystemGestureDownTime GUARDED_BY(mLock);
-
     // Blocked event latency optimization.  Drops old events when the user intends
     // to transfer focus to a new application.
     std::shared_ptr<const EventEntry> mNextUnblockedEvent GUARDED_BY(mLock);
@@ -344,8 +346,9 @@ private:
     bool mDispatchEnabled GUARDED_BY(mLock);
     bool mDispatchFrozen GUARDED_BY(mLock);
     bool mDispatchFrozenExt GUARDED_BY(mLock);
-    bool mBlockNextSystemGesture GUARDED_BY(mLock);
     bool mInputFilterEnabled GUARDED_BY(mLock);
+    bool mBlockSystemGesture GUARDED_BY(mLock);
+    int mSystemGestureSize GUARDED_BY(mLock);
     float mMaximumObscuringOpacityForTouch GUARDED_BY(mLock);
 
     // This map is not really needed, but it helps a lot with debugging (dumpsys input).

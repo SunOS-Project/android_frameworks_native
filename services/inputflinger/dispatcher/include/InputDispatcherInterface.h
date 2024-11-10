@@ -210,6 +210,21 @@ public:
     virtual void setDisplayEligibilityForPointerCapture(ui::LogicalDisplayId displayId,
                                                         bool isEligible) = 0;
 
+    /**
+     * Notify that follow motion events are system gestures.
+     */
+    virtual void notifySystemGestureDown() = 0;
+
+    /**
+     * Wake up looper to dispatch pending system gestures.
+     */
+    virtual void dispatchPendingSystemGesture() = 0;
+
+    /**
+     * Wake up looper to drop pending system gestures.
+     */
+    virtual void dropPendingSystemGesture() = 0;
+
     /* Flush input device motion sensor.
      *
      * Returns true on success.
