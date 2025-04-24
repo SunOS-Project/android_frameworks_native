@@ -96,11 +96,18 @@ cc_library {
         "libcompositionengine_defaults",
         "libsurfaceflinger_common_deps",
         "libqtisurfaceflingerextension_defaults",
-        "surfaceflinger_udfps_lib_defaults",
     ],
     static_libs: [
         "libqticompositionengineextension",
     ],
+    cflags: select(soong_config_variable("surfaceflinger", "udfps_lib"), {
+        any @ flag_val: ["-DTARGET_PROVIDES_UDFPS_LIB"],
+        default: [],
+    }),
+    whole_static_libs: select(soong_config_variable("surfaceflinger", "udfps_lib"), {
+        any @ flag_val: [flag_val],
+        default: ["surfaceflinger_udfps_lib"],
+    }),
     srcs: [
         ":libcompositionengine_sources",
     ],
